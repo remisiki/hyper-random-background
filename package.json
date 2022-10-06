@@ -1,0 +1,18 @@
+{
+	"name": "hyper-random-background",
+	"version": "1.0.0",
+	"keywords": ["hyper", "hyper-plugin", "background", "random", "effect", "image", "folder", "interval", "time"],
+	"description": "Set background with random images every time interval",
+	"main": "index.js",
+	"files": ["index.js"],
+	"license": "MIT",
+	"author": "remisiki",
+	"homepage": "https://github.com/remisiki/hyper-random-background/issues",
+	"bugs": {
+		"url": "https://github.com/remisiki/hyper-random-background/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/remisiki/hyper-random-background.git"
+	}
+}
