@@ -2,20 +2,35 @@ const DEFAULT_COLOR = "rgba(0, 0, 0, .7)";
 const DEFAULT_INTERVAL = 600;
 const DEFAULT_FADE = true;
 const DEFAULT_BLUR = "0px";
+const DEFAULT_OPACITY_DELAY = "0.4s";
+const DEFAULT_SWITCH_BACKGROUND_KEY = "CmdOrCtrl+Shift+S";
 
 const fs = require("fs");
 const path = require("path");
-const { ipcRenderer } = require("electron");
+const { Menu, ipcRenderer, ipcMain } = require("electron");
 
+// I have no other way to pass config to decorateMenu, so define a global config here
+// These variables may have inconsistent values in frontend and backend
+// globalConfigProxy will only work in frontend
+let globalConfig = undefined;
+let globalConfigProxy = undefined;
+let defaultProfile = undefined;
+// windows only live in backend
+const windows = [];
+
+// This function works at frontend
 module.exports.decorateHyper = (Hyper, { React, notify }) => {
 	return class extends React.PureComponent {
 		constructor(props) {
 			super(props);
 			this.repaint = undefined;
 			this.lastImage = undefined;
+			this.init(defaultProfile);
+		}
 
+		init(defaultProfile) {
 			// Interval is expected to be a good number
-			this.interval = this.props.customConfig.backgroundImage?.interval;
+			this.interval = defaultProfile.interval;
 			if (!Number.isInteger(this.interval)) {
 				console.error(`Interval ${this.interval} is not an integer, fall back to default.`);
 				this.interval = DEFAULT_INTERVAL;
@@ -25,7 +40,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 			}
 			this.interval *= 1000;
 
-			this.effectEnabled = (this.props.customConfig.backgroundImage?.fade === false) ? false : true;
+			this.effectEnabled = (defaultProfile.fade === false) ? false : true;
 			this.setImageDelay = this.effectEnabled ? 300 : 0;
 			this.fadeInDelay = this.effectEnabled ? 600 : 0;
 		}
@@ -45,7 +60,18 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 					this.changeBackground();
 				}, this.interval);
 			}
-			ipcRenderer.on("change-background", () => {
+			// Listen from backend
+			// If globalConfigFromBackend specified, globalConfig at frontend will be updated
+			if (ipcRenderer.rawListeners("change-background").length > 0) {
+				ipcRenderer.removeAllListeners("change-background");
+			}
+			ipcRenderer.on("change-background", (e, globalConfigFromBackend) => {
+				if (globalConfigFromBackend) {
+					globalConfig = globalConfigFromBackend;
+					defaultProfile = globalConfig.backgroundImage.profiles[globalConfig.backgroundImage.default];
+					this.init(defaultProfile); // Update other parameters
+				}
+				// Change background and reset interval
 				this.changeBackground();
 				clearInterval(this.repaint);
 				this.repaint = setInterval(() => {
@@ -62,14 +88,14 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 		}
 
 		getRandomImagePath() {
-			const folder = this.props.customConfig.backgroundImage?.folder;
-			if (!folder) {
+			const filePath = defaultProfile.path;
+			if (!filePath) {
 				return null;
 			} else {
-				const files = fs.readdirSync(folder)
+				const files = fs.readdirSync(filePath)
 				const images = files.filter(x => x.match(/(\.jpg)|(\.png)|(\.jpe)|(\.jpeg)$/i))
 				const image = images[Math.floor(Math.random() * images.length)];
-				return path.resolve(folder, image);
+				return path.resolve(filePath, image);
 			}
 		}
 
@@ -81,9 +107,15 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 			} else {
 				this.lastImage = image;
 				const background = document.querySelector(".terms_terms");
+				const overlayColor = (defaultProfile.overlayColor || DEFAULT_COLOR);
+				const opacityDelay = (defaultProfile.fade === false) ? "0s" : DEFAULT_OPACITY_DELAY;
+				const blur = (defaultProfile.blur || DEFAULT_BLUR);
 				background.style.setProperty("--background-opacity", 0);
+				background.style.setProperty("--background-color", overlayColor);
+				background.style.setProperty("--opacity-delay", opacityDelay);
+				background.style.setProperty("--blur-size", blur);
 				setTimeout(() => {
-					background.style.setProperty("--background-image", `url(file://${image})`);
+					background.style.setProperty("--background-image", `url("file://${image}")`);
 				}, this.setImageDelay);
 				setTimeout(() => {
 					background.style.setProperty("--background-opacity", 1);
@@ -94,10 +126,24 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 	};
 }
 
+// This function works at frontend
 module.exports.reduceUI = (state, {type, config}) => {
 	switch (type) {
 		case "CONFIG_LOAD":
+			globalConfig = config;
+			// Set up proxy to listen for changes on globalConfig
+			// Change background if globalConfig changes
+			globalConfigProxy = new Proxy(globalConfig, {
+				set(target, prop, value) {
+					target[prop] = value;
+					updateBackgroundOfAllWindows(false); // Set false to execute from frontend
+				}
+			});
+			return state.set("customConfig", config);
 		case "CONFIG_RELOAD": 
+			// Set by proxy to apply changes
+			globalConfigProxy.backgroundImage = config.backgroundImage;
+			defaultProfile = config.backgroundImage.profiles[config.backgroundImage.default];
 			return state.set("customConfig", config);
 		default:
 			return state;
@@ -110,22 +156,28 @@ module.exports.mapHyperState = (state, map) => {
 	});
 }
 
+// This function works at backend
 module.exports.decorateConfig = (config) => {
-	const opacityDelay = (config.backgroundImage?.fade === false) ? "0s" : "0.5s";
-	const blur = (config.backgroundImage?.blur || DEFAULT_BLUR);
-	return Object.assign({}, config, {
+	defaultProfile = config.backgroundImage.profiles[config.backgroundImage.default];
+	const overlayColor = (defaultProfile.overlayColor || DEFAULT_COLOR);
+	const opacityDelay = (defaultProfile.fade === false) ? "0s" : DEFAULT_OPACITY_DELAY;
+	const blur = (defaultProfile.blur || DEFAULT_BLUR);
+	globalConfig = Object.assign({}, config, {
 		css: `
 			${config.css || ''}
 			.terms_terms {
 				--background-image: unset;
 				--background-opacity: 1;
+				--background-color: ${overlayColor};
+				--opacity-delay: ${opacityDelay};
+				--blur-size: ${blur}
 			}
 			.terms_terms::before {
 				content: "";
 				background-image: var(--background-image);
 				background-position: center;
 				background-size: cover;
-				transition: opacity ${opacityDelay} ease;
+				transition: opacity var(--opacity-delay) ease;
 				opacity: var(--background-opacity);
 				position: absolute;
 				top: 0;
@@ -134,23 +186,72 @@ module.exports.decorateConfig = (config) => {
 				right: 0;
 			}
 			.terms_termGroup {
-				background-color: ${config.backgroundImage?.overlayColor || DEFAULT_COLOR};
-				backdrop-filter: blur(${blur});
+				background-color: var(--background-color);
+				backdrop-filter: blur(var(--blur-size));
 			}
 		`
 	});
+	// Listen from frontend
+	if (ipcMain.rawListeners("change-background").length > 0) {
+		ipcMain.removeAllListeners("change-background");
+	}
+	ipcMain.on("change-background", () => updateBackgroundOfAllWindows());
+	return globalConfig;
 }
 
-module.exports.decorateMenu = (menu, b) => {
+// This function works at backend
+module.exports.onWindow = (win) => {
+	windows.push(win);
+}
+
+// This function works at both frontend and backend
+const updateBackgroundOfAllWindows = (backend = true) => {
+	if (backend) {
+		windows.forEach((win) => {
+			win.webContents.send("change-background", globalConfig);
+		});
+	} else {
+		ipcRenderer.send("change-background");
+	}
+}
+
+// This function works at backend
+module.exports.decorateMenu = (menu) => {
+	const profileList = [];
+	const profileNames = Object.keys(globalConfig.backgroundImage.profiles);
+	profileNames.forEach((name, i) => {
+		profileList.push({
+			id: `background-profile-${name}`,
+			label: name,
+			type: "checkbox",
+			checked: (name === globalConfig.backgroundImage.default),
+			click: () => {
+				const _menu = Menu.getApplicationMenu();
+				// Uncheck other profiles
+				profileNames.forEach((_name) => {
+					const profileMenuItem = _menu.getMenuItemById(`background-profile-${_name}`);
+					profileMenuItem.checked = (_name === name);
+				});
+				// Update config. There is no proxy at backend, so change background manually
+				globalConfig.backgroundImage.default = name;
+				defaultProfile = globalConfig.backgroundImage.profiles[name];
+				updateBackgroundOfAllWindows();
+			},
+		});
+	});
 	const newMenu = [
 		...menu,
 		{
 			label: "Background",
 			submenu: [
 				{
+					label: "Profiles",
+					submenu: profileList
+				},
+				{
 					label: "Next Image",
-					click: (item, win) => {win.webContents.send("change-background")},
-					accelerator: "CmdOrCtrl+Shift+S"
+					click: () => updateBackgroundOfAllWindows(),
+					accelerator: defaultProfile.switchBackgroundKey || DEFAULT_SWITCH_BACKGROUND_KEY
 				}
 			]
 		}
