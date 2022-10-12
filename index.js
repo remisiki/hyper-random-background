@@ -5,6 +5,7 @@ const DEFAULT_BLUR = "0px";
 
 const fs = require("fs");
 const path = require("path");
+const { ipcRenderer } = require("electron");
 
 module.exports.decorateHyper = (Hyper, { React, notify }) => {
 	return class extends React.PureComponent {
@@ -44,11 +45,19 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 					this.changeBackground();
 				}, this.interval);
 			}
+			ipcRenderer.on("change-background", () => {
+				this.changeBackground();
+				clearInterval(this.repaint);
+				this.repaint = setInterval(() => {
+					this.changeBackground();
+				}, this.interval);
+			});
 		}
 
 		componentWillUnmount() {
 			if (this.repaint) {
 				clearInterval(this.repaint);
+				this.repaint = undefined;
 			}
 		}
 
@@ -87,8 +96,8 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 
 module.exports.reduceUI = (state, {type, config}) => {
 	switch (type) {
-		case 'CONFIG_LOAD':
-		case 'CONFIG_RELOAD': 
+		case "CONFIG_LOAD":
+		case "CONFIG_RELOAD": 
 			return state.set("customConfig", config);
 		default:
 			return state;
@@ -130,4 +139,21 @@ module.exports.decorateConfig = (config) => {
 			}
 		`
 	});
+}
+
+module.exports.decorateMenu = (menu, b) => {
+	const newMenu = [
+		...menu,
+		{
+			label: "Background",
+			submenu: [
+				{
+					label: "Next Image",
+					click: (item, win) => {win.webContents.send("change-background")},
+					accelerator: "CmdOrCtrl+Shift+S"
+				}
+			]
+		}
+	];
+	return newMenu;
 }
