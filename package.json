@@ -1,6 +1,6 @@
 {
   "name": "hyper-random-background",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "keywords": [
     "hyper",
     "hyper-plugin",
@@ -29,5 +29,8 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "image-size": "^1.0.2"
   }
 }

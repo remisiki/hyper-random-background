@@ -7,7 +7,8 @@ const DEFAULT_SWITCH_BACKGROUND_KEY = "CmdOrCtrl+Shift+S";
 
 const fs = require("fs");
 const path = require("path");
-const { Menu, ipcRenderer, ipcMain } = require("electron");
+const sizeOf = require("image-size");
+const { Menu, ipcRenderer, ipcMain, shell } = require("electron");
 
 // I have no other way to pass config to decorateMenu, so define a global config here
 // These variables may have inconsistent values in frontend and backend
@@ -15,6 +16,7 @@ const { Menu, ipcRenderer, ipcMain } = require("electron");
 let globalConfig = undefined;
 let globalConfigProxy = undefined;
 let defaultProfile = undefined;
+let currentImages = [];
 // windows only live in backend
 const windows = [];
 
@@ -87,26 +89,78 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 			}
 		}
 
+		imageIsVertical(filePath) {
+			const dimensions = sizeOf(filePath);
+			return (dimensions.height / dimensions.width > 1.1);
+		}
+
+		getImageChildrenOfDir(filePath) {
+			const files = fs.readdirSync(filePath);
+			const images = files
+				.filter(x => x.match(/(\.jpg)|(\.png)|(\.jpe)|(\.jpeg)|(\.webp)$/i))
+				.map(x => path.resolve(filePath, x))
+			;
+			return images;
+		}
+
 		getRandomImagePath() {
 			const filePath = defaultProfile.path;
-			if (!filePath) {
-				return null;
-			} else {
-				const files = fs.readdirSync(filePath)
-				const images = files.filter(x => x.match(/(\.jpg)|(\.png)|(\.jpe)|(\.jpeg)$/i))
+			const fileStat = fs.lstatSync(filePath);
+			let images = [];
+			try {
+				if (fileStat.isFile()) {
+					// Path is a file, read every line in the file
+					const entries = fs.readFileSync(filePath).toString().split("\n").filter(x => x);
+					entries.forEach(entry => {
+						const entryStat = fs.lstatSync(entry);
+						if (entryStat.isFile()) {
+							images.push(entry);
+						} else if (entryStat.isDirectory()) {
+							images = images.concat(this.getImageChildrenOfDir(entry));
+						}
+					});
+				} else if (fileStat.isDirectory()) {
+					// Path is directory, list all images in that directory
+					images = images.concat(this.getImageChildrenOfDir(filePath));
+				}
+			} catch (err) {
+				console.error(err);
+				return [];
+			}
+			if (images.length > 0) {
 				const image = images[Math.floor(Math.random() * images.length)];
-				return path.resolve(filePath, image);
+				if (this.imageIsVertical(image)) {
+					// If image is vertical, randomly select another one different from this one
+					// If nextImage is also vertical, align them in a line
+					// If nextImage is horizontal, only use nextImage
+					images.splice(images.indexOf(image), 1);
+					const nextImage = images[Math.floor(Math.random() * images.length)];
+					if (!nextImage) {
+						return [image];
+					} else if (!this.imageIsVertical(nextImage)) {
+						return [nextImage];
+					}
+					return [image, nextImage];
+				} else {
+					return [image];
+				}
+			} else {
+				return [];
 			}
 		}
 
 		changeBackground() {
-			const image = this.getRandomImagePath();
-			if ((!image) || (image === this.lastImage)) {
+			const images = this.getRandomImagePath();
+			ipcRenderer.send("set-image-path", images);
+			if ((images.length === 0) || (JSON.stringify(images) === JSON.stringify(this.lastImage))) {
 				// If the same image is selected, do nothing
 				return;
 			} else {
-				this.lastImage = image;
+				this.lastImage = [...images];
 				const background = document.querySelector(".terms_terms");
+				const imageUrls = (images.length === 1) ? `url("file://${images[0]}")` : `url("file://${images[0]}"), url("file://${images[1]}")`;
+				const backgroundPosition = (images.length === 1) ? "center" : "left, right";
+				const backgroundSize = (images.length === 1) ? "cover" : "50%";
 				const overlayColor = (defaultProfile.overlayColor || DEFAULT_COLOR);
 				const opacityDelay = (defaultProfile.fade === false) ? "0s" : DEFAULT_OPACITY_DELAY;
 				const blur = (defaultProfile.blur || DEFAULT_BLUR);
@@ -115,7 +169,9 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 				background.style.setProperty("--opacity-delay", opacityDelay);
 				background.style.setProperty("--blur-size", blur);
 				setTimeout(() => {
-					background.style.setProperty("--background-image", `url("file://${image}")`);
+					background.style.setProperty("--background-position", backgroundPosition);
+					background.style.setProperty("--background-size", backgroundSize);
+					background.style.setProperty("--background-image", imageUrls);
 				}, this.setImageDelay);
 				setTimeout(() => {
 					background.style.setProperty("--background-opacity", 1);
@@ -170,13 +226,16 @@ module.exports.decorateConfig = (config) => {
 				--background-opacity: 1;
 				--background-color: ${overlayColor};
 				--opacity-delay: ${opacityDelay};
-				--blur-size: ${blur}
+				--blur-size: ${blur};
+				--background-position: center;
+				--background-size: cover;
 			}
 			.terms_terms::before {
 				content: "";
 				background-image: var(--background-image);
-				background-position: center;
-				background-size: cover;
+				background-position: var(--background-position);
+				background-size: var(--background-size);
+				background-repeat: no-repeat;
 				transition: opacity var(--opacity-delay) ease;
 				opacity: var(--background-opacity);
 				position: absolute;
@@ -191,12 +250,16 @@ module.exports.decorateConfig = (config) => {
 			}
 		`
 	});
-	// Listen from frontend
-	if (ipcMain.rawListeners("change-background").length > 0) {
-		ipcMain.removeAllListeners("change-background");
-	}
-	ipcMain.on("change-background", () => updateBackgroundOfAllWindows());
 	return globalConfig;
+}
+
+// This function works at backend
+module.exports.onApp = (app) => {
+	// Listen from frontend
+	ipcMain
+		.on("change-background", () => updateBackgroundOfAllWindows())
+		.on("set-image-path", (e, images) => {currentImages = [...images]})
+	;
 }
 
 // This function works at backend
@@ -252,6 +315,12 @@ module.exports.decorateMenu = (menu) => {
 					label: "Next Image",
 					click: () => updateBackgroundOfAllWindows(),
 					accelerator: defaultProfile.switchBackgroundKey || DEFAULT_SWITCH_BACKGROUND_KEY
+				},
+				{
+					label: "View Current Image",
+					click: () => {
+						currentImages.forEach((i) => shell.openPath(i));
+					}
 				}
 			]
 		}
