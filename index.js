@@ -150,32 +150,43 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 		}
 
 		changeBackground() {
-			const images = this.getRandomImagePath();
-			ipcRenderer.send("set-image-path", images);
-			if ((images.length === 0) || (JSON.stringify(images) === JSON.stringify(this.lastImage))) {
-				// If the same image is selected, do nothing
-				return;
-			} else {
-				this.lastImage = [...images];
+			if (!defaultProfile.path) {
+				// If path is nothing
+				ipcRenderer.send("set-image-path", []);
 				const background = document.querySelector(".terms_terms");
-				const imageUrls = (images.length === 1) ? `url("file://${images[0]}")` : `url("file://${images[0]}"), url("file://${images[1]}")`;
-				const backgroundPosition = (images.length === 1) ? "center" : "left, right";
-				const backgroundSize = (images.length === 1) ? "cover" : "50%";
-				const overlayColor = (defaultProfile.overlayColor || DEFAULT_COLOR);
-				const opacityDelay = (defaultProfile.fade === false) ? "0s" : DEFAULT_OPACITY_DELAY;
-				const blur = (defaultProfile.blur || DEFAULT_BLUR);
 				background.style.setProperty("--background-opacity", 0);
-				background.style.setProperty("--background-color", overlayColor);
-				background.style.setProperty("--opacity-delay", opacityDelay);
-				background.style.setProperty("--blur-size", blur);
-				setTimeout(() => {
-					background.style.setProperty("--background-position", backgroundPosition);
-					background.style.setProperty("--background-size", backgroundSize);
-					background.style.setProperty("--background-image", imageUrls);
-				}, this.setImageDelay);
-				setTimeout(() => {
-					background.style.setProperty("--background-opacity", 1);
-				}, this.fadeInDelay);
+				background.style.setProperty("--background-color", "unset");
+				background.style.setProperty("--opacity-delay", "unset");
+				background.style.setProperty("--blur-size", "unset");
+				background.style.setProperty("--background-image", "unset");
+			} else {
+				const images = this.getRandomImagePath();
+				ipcRenderer.send("set-image-path", images);
+				if ((images.length === 0) || (JSON.stringify(images) === JSON.stringify(this.lastImage))) {
+					// If the same image is selected, do nothing
+					return;
+				} else {
+					this.lastImage = [...images];
+					const background = document.querySelector(".terms_terms");
+					const imageUrls = (images.length === 1) ? `url("file://${images[0]}")` : `url("file://${images[0]}"), url("file://${images[1]}")`;
+					const backgroundPosition = (images.length === 1) ? "center" : "left, right";
+					const backgroundSize = (images.length === 1) ? "cover" : "50%";
+					const overlayColor = (defaultProfile.overlayColor || DEFAULT_COLOR);
+					const opacityDelay = (defaultProfile.fade === false) ? "0s" : DEFAULT_OPACITY_DELAY;
+					const blur = (defaultProfile.blur || DEFAULT_BLUR);
+					background.style.setProperty("--background-opacity", 0);
+					background.style.setProperty("--background-color", overlayColor);
+					background.style.setProperty("--opacity-delay", opacityDelay);
+					background.style.setProperty("--blur-size", blur);
+					setTimeout(() => {
+						background.style.setProperty("--background-position", backgroundPosition);
+						background.style.setProperty("--background-size", backgroundSize);
+						background.style.setProperty("--background-image", imageUrls);
+					}, this.setImageDelay);
+					setTimeout(() => {
+						background.style.setProperty("--background-opacity", 1);
+					}, this.fadeInDelay);
+				}
 			}
 		}
 
@@ -280,10 +291,9 @@ const updateBackgroundOfAllWindows = (backend = true) => {
 
 // This function works at backend
 module.exports.decorateMenu = (menu) => {
-	const profileList = [];
 	const profileNames = Object.keys(globalConfig.backgroundImage.profiles);
-	profileNames.forEach((name, i) => {
-		profileList.push({
+	const profileList = profileNames.map((name, i) => {
+		return {
 			id: `background-profile-${name}`,
 			label: name,
 			type: "checkbox",
@@ -300,7 +310,7 @@ module.exports.decorateMenu = (menu) => {
 				defaultProfile = globalConfig.backgroundImage.profiles[name];
 				updateBackgroundOfAllWindows();
 			},
-		});
+		};
 	});
 	const newMenu = [
 		...menu,

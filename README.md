@@ -29,6 +29,7 @@ module.exports = {
     backgroundImage: {
       default: "default",
       profiles: {
+        none: {}, // Option for no backgrounds
         default: {
           path: "/path/to/your/directory",
           overlayColor: "rgba(0, 0, 0, 0.7)",
