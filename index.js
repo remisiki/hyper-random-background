@@ -18,7 +18,7 @@ let globalConfigProxy = undefined;
 let defaultProfile = undefined;
 let currentImages = [];
 // windows only live in backend
-const windows = [];
+let windows = [];
 
 // This function works at frontend
 module.exports.decorateHyper = (Hyper, { React, notify }) => {
@@ -27,6 +27,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 			super(props);
 			this.repaint = undefined;
 			this.lastImage = undefined;
+			this.uid = undefined;
 			this.init(defaultProfile);
 		}
 
@@ -53,15 +54,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 			);
 		}
 
-		componentDidMount() {
-			if (!this.repaint) {
-				// Init
-				this.changeBackground();
-				// Change every time interval
-				this.repaint = setInterval(() => {
-					this.changeBackground();
-				}, this.interval);
-			}
+		async componentDidMount() {
 			// Listen from backend
 			// If globalConfigFromBackend specified, globalConfig at frontend will be updated
 			if (ipcRenderer.rawListeners("change-background").length > 0) {
@@ -80,6 +73,19 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 					this.changeBackground();
 				}, this.interval);
 			});
+			// Set window uid
+			this.uid = await ipcRenderer.invoke("get-window-uid");
+			console.log(this.uid);
+
+			if (!this.repaint) {
+				// Init
+				this.changeBackground();
+				// Change every time interval
+				this.repaint = setInterval(() => {
+					this.changeBackground();
+				}, this.interval);
+			}
+
 		}
 
 		componentWillUnmount() {
@@ -152,7 +158,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 		changeBackground() {
 			if (!defaultProfile.path) {
 				// If path is nothing
-				ipcRenderer.send("set-image-path", []);
+				ipcRenderer.send("set-image-path", this.uid, []);
 				const background = document.querySelector(".terms_terms");
 				background.style.setProperty("--background-opacity", 0);
 				background.style.setProperty("--background-color", "unset");
@@ -161,7 +167,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 				background.style.setProperty("--background-image", "unset");
 			} else {
 				const images = this.getRandomImagePath();
-				ipcRenderer.send("set-image-path", images);
+				ipcRenderer.send("set-image-path", this.uid, images);
 				if ((images.length === 0) || (JSON.stringify(images) === JSON.stringify(this.lastImage))) {
 					// If the same image is selected, do nothing
 					return;
@@ -269,13 +275,30 @@ module.exports.onApp = (app) => {
 	// Listen from frontend
 	ipcMain
 		.on("change-background", () => updateBackgroundOfAllWindows())
-		.on("set-image-path", (e, images) => {currentImages = [...images]})
+		.on("set-image-path", (e, uid, images) => {
+			const i = currentImages.findIndex(x => x.uid === uid);
+			if (i === -1) {
+				currentImages.push({
+					uid: uid,
+					images: [...images]
+				});
+			} else {
+				currentImages[i].images = [...images];
+			}
+		})
 	;
 }
 
 // This function works at backend
 module.exports.onWindow = (win) => {
 	windows.push(win);
+	ipcMain.handleOnce("get-window-uid", () => {
+		return win.uid;
+	});
+	win.on("close", () => {
+		windows = windows.filter(i => i.uid !== win.uid);
+		currentImages = currentImages.filter(i => i.uid !== win.uid);
+	});
 }
 
 // This function works at both frontend and backend
@@ -329,7 +352,7 @@ module.exports.decorateMenu = (menu) => {
 				{
 					label: "View Current Image",
 					click: () => {
-						currentImages.forEach((i) => shell.openPath(i));
+						currentImages.forEach((i) => i.images.forEach((j) => shell.openPath(j)));
 					}
 				}
 			]
