@@ -161,7 +161,7 @@ module.exports.decorateHyper = (Hyper, { React, notify }) => {
 				ipcRenderer.send("set-image-path", this.uid, []);
 				const background = document.querySelector(".terms_terms");
 				background.style.setProperty("--background-opacity", 0);
-				background.style.setProperty("--background-color", "unset");
+				background.style.setProperty("--background-color", "#000");
 				background.style.setProperty("--opacity-delay", "unset");
 				background.style.setProperty("--blur-size", "unset");
 				background.style.setProperty("--background-image", "unset");
